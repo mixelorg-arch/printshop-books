@@ -50,19 +50,18 @@ is what lets a figure be traced back to where it came from.
 Tap **Sign in** and pick who you are. One password each, shared by whoever is on
 that shift — the passwords are not in this repository.
 
-| | Sell · Sales · Items | Books |
+| | Sell · Sales · Items | Report · Books |
 |---|---|---|
-| **Staff** | Yes — ring up, void, change prices | Read-only, and can still print the month |
-| **Admin** | Yes | Yes — record days, expenses and people |
+| **Staff** | Yes — ring up, void, change prices | Hidden |
+| **Admin** | Yes | Yes |
 
-Books is the finished report, so staff can read every figure and print it but
-cannot change what it is built from. Sign in as Admin on the same tablet to make
+Staff get the till and nothing else: the Report and Books tabs are not on their
+screen at all. Sign in as Admin on the same tablet to look at the month or make
 a correction, then sign back out.
 
-Not signed in counts as staff, so the Books cannot be edited offline. That is
-deliberate: a tablet with no signal cannot see what the other tablets have
-already recorded, and editing the month from a stale copy is how figures get
-lost.
+Not signed in counts as staff. That is deliberate: a tablet with no signal
+cannot see what the other tablets have already recorded, and reading or editing
+the month from a stale copy is how figures get lost.
 
 ## Syncing across tablets
 
