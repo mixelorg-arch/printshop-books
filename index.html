@@ -623,7 +623,34 @@ function syncDayWithTill(k){
 // Called after anything that changes what the till has taken. It revisits days
 // that still have sales AND days the till created before, so voiding the last
 // sale of a day updates that day instead of leaving a stale figure behind.
+// Two tablets could each create their own row for the same date, which counts
+// that day twice. Collapse them, but only ever discard a row the till made and
+// nobody touched — a row with wages, a note or a typed-over figure is somebody's
+// work and is never thrown away here.
+function dedupeDays(){
+  const byDate = {};
+  liveDays().forEach(d => (byDate[d.date] = byDate[d.date] || []).push(d));
+  let fixed = 0;
+  Object.keys(byDate).forEach(date => {
+    const rows = byDate[date];
+    if(rows.length < 2) return;
+    const disposable = d => d.sales_source !== 'manual'
+      && !Object.keys(d.pay||{}).length && !Number(d.incentive||0) && !(d.remarks||'').trim();
+    // Keep whatever carries real work; failing that, keep the oldest row so
+    // every tablet converges on the same survivor.
+    const keep = rows.find(d => !disposable(d))
+              || rows.slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0];
+    rows.forEach(d => {
+      if(d === keep || !disposable(d)) return;
+      d.deleted = true; touch(d); fixed++;
+    });
+  });
+  if(fixed){ persist.days(); }
+  return fixed;
+}
+
 function refreshTillDays(){
+  dedupeDays();
   const withSales = liveSales().map(s => dayKey(s.ts));
   const fromTill  = liveDays().filter(d => d.sales_source !== 'manual').map(d => d.date);
   [...new Set([...withSales, ...fromTill])].forEach(syncDayWithTill);
@@ -1679,6 +1706,16 @@ async function bootstrap(){
     const { data, error:e2 } = await sb.from('printshop_services').select('*');
     if(e2) throw e2;
     S.catalog = merge(S.catalog, data||[], col('catalog').fromRow);
+  }
+
+  // The books come down in full. Without this a newly signed-in tablet knows
+  // nothing of the days already recorded, so the till invents a second row for
+  // today and the month is counted twice. They are small; a full pull is fine.
+  for(const c of COLLECTIONS){
+    if(c.key === 'catalog' || c.key === 'sales') continue;   // handled either side of this
+    const { data, error:eb } = await sb.from(c.table).select('*');
+    if(eb) throw eb;
+    S[c.key] = merge(S[c.key], data||[], c.fromRow);
   }
 
   // Only recent history comes down to a new tablet. The rest stays on the
