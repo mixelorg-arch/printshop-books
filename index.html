@@ -122,15 +122,35 @@ aside.cart{
   width:380px;flex:none;background:var(--paper);border-left:1px solid var(--hairline);
   display:flex;flex-direction:column;overflow:hidden;
 }
-.cart-head{display:flex;align-items:center;justify-content:space-between;padding:12px 20px 10px;flex:none;gap:10px}
-.cart-head h2{cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Which customer the panel belongs to, said once and said loudly — filled the
+   same ink as their chip in the band above, so the two read as one thing. */
+.now-serving{
+  flex:none;margin:14px 20px 0;padding:14px 18px;border-radius:var(--r-card);
+  background:var(--ink);color:var(--surface-alt);display:flex;flex-direction:column;gap:3px;
+}
+.now-serving .k{font-size:11px;font-weight:500;letter-spacing:.6px;text-transform:uppercase;opacity:.7}
+.now-serving .v{
+  font-size:28px;font-weight:600;letter-spacing:-.7px;line-height:1.15;cursor:pointer;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.cart-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px 8px;flex:none;gap:10px}
+.cart-sub{margin:0;font-size:12px;font-weight:500;letter-spacing:.6px;color:var(--mid);text-transform:uppercase}
 .head-acts{display:flex;align-items:center;gap:4px;flex:none}
-/* Wrapping, not scrolling sideways: at this size only two fit across the cart
-   panel, and a customer you cannot see is a customer you forget. Past about
-   two rows it scrolls rather than eating the cart. */
+/* Its own band, on paper against the canvas the tiles sit on, so the row of
+   people waiting never reads as another row of things to sell. */
+.custbar{
+  flex:none;display:flex;align-items:center;gap:16px;
+  padding:12px 20px;background:var(--paper);border-bottom:1px solid var(--hairline);
+}
+.custbar-lbl{
+  flex:none;font-size:12px;font-weight:500;letter-spacing:.6px;
+  color:var(--mid);text-transform:uppercase;
+}
+/* Across the full width there is room for one row; the one being served is
+   scrolled back into view whenever the strip redraws. */
 .custs{
-  display:flex;flex-wrap:wrap;gap:8px;padding:14px 20px 2px;
-  flex:none;max-height:156px;overflow-y:auto;scrollbar-width:none;
+  display:flex;gap:8px;flex:1;min-width:0;
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding:2px 0;
 }
 .custs::-webkit-scrollbar{display:none}
 /* Filled rather than outlined: against the white cart panel a hairline chip
@@ -149,7 +169,7 @@ aside.cart{
 }
 .cust[aria-pressed="true"] .amt{color:var(--surface-alt)}
 .cust.add{
-  border-style:dashed;background:transparent;color:var(--mid);
+  flex:none;border-style:dashed;background:transparent;color:var(--mid);
   align-items:center;justify-content:center;font-size:28px;font-weight:400;line-height:1;
   min-width:66px;padding:10px 16px;
 }
@@ -404,13 +424,21 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <!-- SELL -->
     <section class="view on" id="view-sell">
       <div class="sell-left">
+        <div class="custbar">
+          <span class="custbar-lbl">Customers</span>
+          <div class="custs" id="custs"></div>
+          <button class="cust add" id="addCust" aria-label="Another customer">+</button>
+        </div>
         <div class="chips" id="chips"></div>
         <div class="grid" id="grid"></div>
       </div>
       <aside class="cart" id="cartPanel">
-        <div class="custs" id="custs"></div>
+        <div class="now-serving">
+          <span class="k">Now serving</span>
+          <span class="v" id="cartTitle" title="Tap to rename">Customer 1</span>
+        </div>
         <div class="cart-head">
-          <h2 id="cartTitle" title="Tap to rename">Customer 1</h2>
+          <h2 class="cart-sub">Current sale</h2>
           <div class="head-acts">
             <button class="link" id="clearCart">Clear</button>
             <button class="link danger" id="closeCust" hidden>Close</button>
@@ -931,7 +959,7 @@ function renderCusts(){
     return '<button class="cust" data-cust="'+esc(c.id)+'" aria-pressed="'+(c.id===a.id)+'">'+
       '<span>'+esc(c.label)+'</span>'+
       '<span class="amt">'+(c.items.length ? esc(peso(t)) : 'empty')+'</span></button>';
-  }).join('') + '<button class="cust add" id="addCust" aria-label="Another customer">+</button>';
+  }).join('');
   $('#cartTitle').textContent = a.label;
   $('#closeCust').hidden = S.sessions.length < 2;
   const chip = $('#custs .cust[aria-pressed="true"]');
@@ -1386,7 +1414,8 @@ $('#lines').addEventListener('click',e=>{
     onDone:v=>{ if(v!==null) setQty(lid,Math.floor(v)); }});
 });
 
-$('#custs').addEventListener('click',e=>{
+// Delegated from the whole band, because + sits outside the scrolling strip.
+$('.custbar').addEventListener('click',e=>{
   if(e.target.closest('#addCust')) return addCust();
   const b=e.target.closest('button[data-cust]'); if(!b) return;
   switchCust(b.dataset.cust);
