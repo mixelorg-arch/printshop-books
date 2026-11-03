@@ -125,20 +125,34 @@ aside.cart{
 .cart-head{display:flex;align-items:center;justify-content:space-between;padding:12px 20px 10px;flex:none;gap:10px}
 .cart-head h2{cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .head-acts{display:flex;align-items:center;gap:4px;flex:none}
+/* Wrapping, not scrolling sideways: at this size only two fit across the cart
+   panel, and a customer you cannot see is a customer you forget. Past about
+   two rows it scrolls rather than eating the cart. */
 .custs{
-  display:flex;gap:6px;padding:12px 20px 0;overflow-x:auto;flex:none;scrollbar-width:none;
+  display:flex;flex-wrap:wrap;gap:8px;padding:14px 20px 2px;
+  flex:none;max-height:156px;overflow-y:auto;scrollbar-width:none;
 }
 .custs::-webkit-scrollbar{display:none}
+/* Filled rather than outlined: against the white cart panel a hairline chip
+   reads as decoration, and this is the control you reach for most. */
 .cust{
-  flex:none;display:flex;flex-direction:column;align-items:flex-start;gap:1px;
-  min-height:44px;padding:6px 14px;border-radius:var(--r-int);
-  border:1px solid var(--hairline);background:transparent;color:var(--ink);
-  font-size:13px;font-weight:500;white-space:nowrap;
+  flex:none;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;
+  min-height:66px;min-width:118px;padding:10px 18px;border-radius:var(--r-int);
+  border:1px solid var(--hairline);background:var(--canvas);color:var(--ink);
+  font-size:16px;font-weight:500;letter-spacing:-.2px;white-space:nowrap;
+  transition:transform .08s ease;
 }
-.cust .amt{font-size:11px;color:var(--mid);font-variant-numeric:tabular-nums}
-.cust[aria-pressed="true"]{background:var(--ink);color:var(--surface-alt);border-color:var(--ink)}
+.cust:active{transform:scale(.97)}
+.cust .amt{font-size:13px;font-weight:500;color:var(--mid);font-variant-numeric:tabular-nums}
+.cust[aria-pressed="true"]{
+  background:var(--ink);color:var(--surface-alt);border-color:var(--ink);box-shadow:var(--shadow);
+}
 .cust[aria-pressed="true"] .amt{color:var(--surface-alt)}
-.cust.add{border-style:dashed;color:var(--mid);justify-content:center;font-size:18px;padding:6px 16px}
+.cust.add{
+  border-style:dashed;background:transparent;color:var(--mid);
+  align-items:center;justify-content:center;font-size:28px;font-weight:400;line-height:1;
+  min-width:66px;padding:10px 16px;
+}
 .cart-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.3px}
 .link{font-size:14px;font-weight:500;color:var(--mid);padding:8px 4px;min-height:40px}
 .link.danger{color:var(--ember)}
@@ -916,6 +930,8 @@ function renderCusts(){
   }).join('') + '<button class="cust add" id="addCust" aria-label="Another customer">+</button>';
   $('#cartTitle').textContent = a.label;
   $('#closeCust').hidden = S.sessions.length < 2;
+  const chip = $('#custs .cust[aria-pressed="true"]');
+  if(chip && chip.scrollIntoView) chip.scrollIntoView({block:'nearest', inline:'nearest'});
 }
 
 function switchCust(id){
