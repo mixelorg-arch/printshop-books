@@ -122,7 +122,23 @@ aside.cart{
   width:380px;flex:none;background:var(--paper);border-left:1px solid var(--hairline);
   display:flex;flex-direction:column;overflow:hidden;
 }
-.cart-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 10px;flex:none}
+.cart-head{display:flex;align-items:center;justify-content:space-between;padding:12px 20px 10px;flex:none;gap:10px}
+.cart-head h2{cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.head-acts{display:flex;align-items:center;gap:4px;flex:none}
+.custs{
+  display:flex;gap:6px;padding:12px 20px 0;overflow-x:auto;flex:none;scrollbar-width:none;
+}
+.custs::-webkit-scrollbar{display:none}
+.cust{
+  flex:none;display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+  min-height:44px;padding:6px 14px;border-radius:var(--r-int);
+  border:1px solid var(--hairline);background:transparent;color:var(--ink);
+  font-size:13px;font-weight:500;white-space:nowrap;
+}
+.cust .amt{font-size:11px;color:var(--mid);font-variant-numeric:tabular-nums}
+.cust[aria-pressed="true"]{background:var(--ink);color:var(--surface-alt);border-color:var(--ink)}
+.cust[aria-pressed="true"] .amt{color:var(--surface-alt)}
+.cust.add{border-style:dashed;color:var(--mid);justify-content:center;font-size:18px;padding:6px 16px}
 .cart-head h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.3px}
 .link{font-size:14px;font-weight:500;color:var(--mid);padding:8px 4px;min-height:40px}
 .link.danger{color:var(--ember)}
@@ -374,9 +390,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
         <div class="grid" id="grid"></div>
       </div>
       <aside class="cart" id="cartPanel">
+        <div class="custs" id="custs"></div>
         <div class="cart-head">
-          <h2>Current Sale</h2>
-          <button class="link danger" id="clearCart">Clear</button>
+          <h2 id="cartTitle" title="Tap to rename">Customer 1</h2>
+          <div class="head-acts">
+            <button class="link" id="clearCart">Clear</button>
+            <button class="link danger" id="closeCust" hidden>Close</button>
+          </div>
         </div>
         <div class="lines" id="lines"></div>
         <div class="cart-foot">
@@ -483,7 +503,10 @@ const DEFAULT_CATALOG = [
 const S = {
   catalog : load('ps_catalog', DEFAULT_CATALOG),
   sales   : load('ps_sales', []),
-  cart    : load('ps_cart', []),
+  // One open sale per customer waiting at the counter. S.cart below always
+  // points at whichever is on screen, so the rest of the till is unchanged.
+  sessions: load('ps_sessions', null),
+  activeId: load('ps_active', ''),
   // The books. These three ride in the same tables as the standalone sales
   // ledger, so both apps see one set of figures.
   days    : load('ps_days', []),
@@ -492,10 +515,43 @@ const S = {
   settings: load('ps_settings', {shop:'Print Shop'}),
   syncedAt: load('ps_syncedat', '')
 };
+// Carry the single cart from before over as the first customer, so an upgrade
+// never drops a sale somebody is halfway through ringing up.
+if(!Array.isArray(S.sessions)){
+  S.sessions = [{id:uid(), label:'Customer 1', items:load('ps_cart', [])}];
+  S.activeId = S.sessions[0].id;
+  try{ localStorage.removeItem('ps_cart'); }catch(e){ /* storage blocked */ }
+}
+
+function activeSession(){
+  if(!S.sessions.length){
+    S.sessions.push({id:uid(), label:nextCustomerLabel(), items:[]});
+  }
+  let a = S.sessions.find(x=>x.id===S.activeId);
+  if(!a){ a = S.sessions[0]; S.activeId = a.id; }
+  return a;
+}
+
+// Every `S.cart` in the app reads and writes whichever customer is on screen.
+Object.defineProperty(S, 'cart', {
+  get(){ return activeSession().items; },
+  set(v){ activeSession().items = v; }
+});
+
+// Reuse the lowest free number rather than counting up forever, so closing
+// Customer 2 and opening another gives you 2 again instead of 7.
+function nextCustomerLabel(){
+  const taken = new Set(S.sessions.map(x=>{
+    const m = /^Customer (\d+)$/.exec(x.label||''); return m ? Number(m[1]) : 0;
+  }));
+  let n = 1; while(taken.has(n)) n++;
+  return 'Customer ' + n;
+}
+
 const persist = {
   catalog :()=>save('ps_catalog',S.catalog),
   sales   :()=>save('ps_sales',S.sales),
-  cart    :()=>save('ps_cart',S.cart),
+  cart    :()=>{ save('ps_sessions',S.sessions); save('ps_active',S.activeId); },
   days    :()=>save('ps_days',S.days),
   people  :()=>save('ps_people',S.people),
   expenses:()=>save('ps_expenses',S.expenses),
@@ -691,12 +747,43 @@ function openModal(html, afterRender){
   const scrim=$('#scrim'), old=$('#modal');
   const m=document.createElement('div');
   m.className='modal'; m.id='modal'; m.innerHTML=html;
+  modalKeys(null);
   scrim.replaceChild(m, old);
   scrim.classList.add('on');
   if(afterRender) afterRender(m);
   m.scrollTop=0;
 }
-function closeModal(){ $('#scrim').classList.remove('on'); $('#modal').innerHTML=''; }
+function closeModal(){ modalKeys(null); $('#scrim').classList.remove('on'); $('#modal').innerHTML=''; }
+
+/* Physical keyboard for whichever sheet is open. One handler at a time: a new
+   sheet replaces the last one's, and closing clears it. */
+let modalKeyFn = null;
+function modalKeys(fn){
+  if(modalKeyFn) document.removeEventListener('keydown', modalKeyFn);
+  modalKeyFn = fn || null;
+  if(modalKeyFn) document.addEventListener('keydown', modalKeyFn);
+}
+
+// Wires a number pad to the keyboard, including the numeric keypad — the key
+// names are identical, so Numpad7 and 7 need no special case. Typing into a
+// text box in the same sheet is left alone; only Enter is taken from it.
+function padKeys(h){
+  modalKeys(e=>{
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
+    const typing = e.target && e.target.matches && e.target.matches('input,textarea,select');
+    if(typing){
+      if(e.key === 'Enter'){ e.preventDefault(); h.enter && h.enter(); }
+      return;
+    }
+    const k = e.key;
+    if(k >= '0' && k <= '9')                   { e.preventDefault(); h.digit(k); }
+    else if(k === '.' || k === ',')            { e.preventDefault(); h.dot && h.dot(); }
+    else if(k === 'Backspace')                 { e.preventDefault(); h.back(); }
+    else if(k === 'Delete' || k.toLowerCase() === 'c') { e.preventDefault(); h.clear(); }
+    else if(k === 'Enter')                     { e.preventDefault(); h.enter && h.enter(); }
+    // Escape already closes the sheet, handled once for every modal.
+  });
+}
 $('#scrim').addEventListener('click',e=>{ if(e.target.id==='scrim') closeModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 
@@ -716,6 +803,16 @@ function numPad(opts){
       const disp=$('#padVal',m);
       const paint=()=>{ disp.textContent = buf===''?'0':buf; };
       paint();
+      const type=k=>{ if(fresh){ buf=''; fresh=false; } if(!(buf==='0'&&k==='0')) buf=(buf==='0'?'':buf)+k;
+                      if(buf.length>9) buf=buf.slice(0,9); paint(); };
+      padKeys({
+        digit:type,
+        dot:()=>{ if(!o.decimal) return; if(fresh){ buf='0'; fresh=false; }
+                  if(buf.indexOf('.')<0){ buf=(buf===''?'0':buf)+'.'; paint(); } },
+        back:()=>{ if(fresh){ buf=''; fresh=false; } else buf=buf.slice(0,-1); paint(); },
+        clear:()=>{ buf=''; fresh=false; paint(); },
+        enter:()=>{ const n=parseFloat(buf); closeModal(); o.onDone(isNaN(n)?null:n); }
+      });
       m.addEventListener('click',e=>{
         const b=e.target.closest('button'); if(!b) return;
         if(b.dataset.k!==undefined){
@@ -739,8 +836,10 @@ function confirmModal(title,msg,ctaText,onYes,danger){
     '<div class="modal-actions"><button class="btn ghost" id="cNo">Cancel</button>'+
     '<button class="btn '+(danger?'danger':'primary')+'" id="cYes">'+esc(ctaText)+'</button></div>',
     m=>{
+      const yes=()=>{ closeModal(); onYes(); };
       $('#cNo',m).onclick=closeModal;
-      $('#cYes',m).onclick=()=>{ closeModal(); onYes(); };
+      $('#cYes',m).onclick=yes;
+      modalKeys(e=>{ if(e.key==='Enter'){ e.preventDefault(); yes(); } });
     }
   );
 }
@@ -796,12 +895,55 @@ function renderCart(){
       '</div>'
     ).join('');
   }
+  renderCusts();
   const n=cartCount(), t=cartTotal();
   $('#cartCount').textContent = n+(n===1?' item':' items');
   $('#cartTotal').textContent = peso(t);
   $('#chargeBtn').disabled = n===0;
   $('#chargeBtn').textContent = n===0 ? 'Charge' : 'Charge '+peso(t);
   $('#dayTotal').textContent = peso(todayTotal());
+}
+
+// One chip per customer waiting, plus a + to start another. The running total
+// sits on the chip so you can see who owes what without switching to them.
+function renderCusts(){
+  const a = activeSession();
+  $('#custs').innerHTML = S.sessions.map(c=>{
+    const t = c.items.reduce((s,l)=>s+l.price*l.qty,0);
+    return '<button class="cust" data-cust="'+esc(c.id)+'" aria-pressed="'+(c.id===a.id)+'">'+
+      '<span>'+esc(c.label)+'</span>'+
+      '<span class="amt">'+(c.items.length ? esc(peso(t)) : 'empty')+'</span></button>';
+  }).join('') + '<button class="cust add" id="addCust" aria-label="Another customer">+</button>';
+  $('#cartTitle').textContent = a.label;
+  $('#closeCust').hidden = S.sessions.length < 2;
+}
+
+function switchCust(id){
+  if(id === S.activeId) return;
+  S.activeId = id; persist.cart(); renderCart(); buzz(5);
+}
+
+function addCust(){
+  const c = {id:uid(), label:nextCustomerLabel(), items:[]};
+  S.sessions.push(c); S.activeId = c.id;
+  persist.cart(); renderCart(); buzz(8);
+  toast(c.label + ' started');
+}
+
+// Closing the last one would leave the till with nowhere to ring up, so the
+// final customer is emptied rather than removed.
+function closeCust(id){
+  const i = S.sessions.findIndex(x=>x.id===id); if(i<0) return;
+  if(S.sessions.length < 2){
+    // The counter is empty again, so the name goes with the person who left.
+    S.sessions[i].items = [];
+    S.sessions[i].label = 'Customer 1';
+  }
+  else {
+    S.sessions.splice(i,1);
+    if(S.activeId === id) S.activeId = S.sessions[Math.max(0,i-1)].id;
+  }
+  persist.cart(); renderCart();
 }
 
 /* ============ charge ============ */
@@ -828,6 +970,18 @@ function openCharge(){
         if(cash!==null&&cash<total) gv.textContent='short '+peso(total-cash);
       };
       paint();
+      const settle=()=>{
+        const cash = buf==='' ? total : parseFloat(buf);
+        if(isNaN(cash) || cash<total){ toast('Cash is less than the total'); return; }
+        closeModal(); completeSale(cash);
+      };
+      padKeys({
+        digit:k=>{ buf=(buf==='0'?'':buf)+k; if(buf.length>7) buf=buf.slice(0,7); paint(); },
+        dot:()=>{ if(buf.indexOf('.')<0){ buf=(buf===''?'0':buf)+'.'; paint(); } },
+        back:()=>{ buf=buf.slice(0,-1); paint(); },
+        clear:()=>{ buf=''; paint(); },
+        enter:settle
+      });
       m.addEventListener('click',e=>{
         const b=e.target.closest('button'); if(!b) return;
         if(b.dataset.k!==undefined){
@@ -866,7 +1020,10 @@ function completeSale(cash){
   };
   S.sales.unshift(touch(sale)); persist.sales();
   afterSalesChanged();
-  S.cart=[]; persist.cart();
+  // They have paid, so their tab goes — unless they are the only one, in which
+  // case it is emptied and left ready for the next person.
+  closeCust(S.activeId);
+  persist.cart();
   renderCart(); renderSales(); renderReport(); scheduleSync();
   buzz(20);
   const chg = sale.change>0 ? ' — change '+peso(sale.change) : '';
@@ -1111,6 +1268,53 @@ $('#tabs').addEventListener('click',e=>{
   showTab(b.dataset.tab);
 });
 
+/* A custom charge and what it was for, entered on one sheet. Opening a number
+   pad over a sheet replaces it, so a description typed first would be thrown
+   away — they belong together. */
+function customAmount(){
+  let buf='';
+  openModal(
+    '<h3>Custom amount</h3>'+
+    '<p class="hint">For a job that is not on the tiles. What you type here is what shows '+
+      'on the sale and the receipt.</p>'+
+    '<div class="field"><label>What is it for</label>'+
+      '<input id="cuDesc" type="text" placeholder="Custom job" autocomplete="off"></div>'+
+    '<div class="display"><span class="k">Amount</span><span class="v" id="cuVal">0</span></div>'+
+    '<div class="quick">'+[25,50,100,200].map(q=>'<button data-q="'+q+'">'+peso(q).replace('.00','')+'</button>').join('')+'</div>'+
+    '<div class="pad">'+['1','2','3','4','5','6','7','8','9','.','0','⌫']
+        .map(k=>'<button data-k="'+k+'">'+k+'</button>').join('')+'</div>'+
+    '<div class="modal-actions"><button class="btn ghost" id="cuNo">Cancel</button>'+
+    '<button class="btn primary" id="cuOk">Add to sale</button></div>',
+    m=>{
+      const val=$('#cuVal',m), desc=$('#cuDesc',m);
+      const paint=()=>{ val.textContent = buf===''?'0':buf; };
+      const type=k=>{ if(!(buf==='0'&&k==='0')) buf=(buf==='0'?'':buf)+k;
+                      if(buf.length>9) buf=buf.slice(0,9); paint(); };
+      const dot =()=>{ if(buf.indexOf('.')<0){ buf=(buf===''?'0':buf)+'.'; paint(); } };
+      const add =()=>{
+        const v=parseFloat(buf);
+        if(isNaN(v) || v<=0){ toast('Enter an amount first'); return; }
+        S.cart.push({lid:uid(), itemId:'custom', cat:'Others', qty:1, price:v,
+                     name:(desc.value||'').trim() || 'Custom job'});
+        closeModal(); persist.cart(); renderCart(); buzz(8);
+      };
+      paint();
+      padKeys({digit:type, dot:dot, back:()=>{ buf=buf.slice(0,-1); paint(); },
+               clear:()=>{ buf=''; paint(); }, enter:add});
+      m.addEventListener('click',e=>{
+        const b=e.target.closest('button'); if(!b) return;
+        if(b.dataset.k!==undefined){ b.dataset.k==='⌫' ? (buf=buf.slice(0,-1), paint())
+                                   : b.dataset.k==='.' ? dot() : type(b.dataset.k); buzz(5); }
+        else if(b.dataset.q!==undefined){ buf=String(b.dataset.q); buzz(5); paint(); }
+        else if(b.id==='cuNo') closeModal();
+        else if(b.id==='cuOk') add();
+      });
+      // Focus is left off the description on purpose, so the keyboard drives the
+      // pad straight away. Tap the box when you want to name the job.
+    }
+  );
+}
+
 /* ============ books: wiring ============ */
 $('#bkMonth').addEventListener('change', e=>{ bkMonth = e.target.value; renderBooks(); });
 $('#bkSeg').addEventListener('click', e=>{
@@ -1144,12 +1348,7 @@ $('#chips').addEventListener('click',e=>{
 
 $('#grid').addEventListener('click',e=>{
   const custom=e.target.closest('#tileCustom');
-  if(custom){
-    numPad({title:'Custom amount', hint:'For jobs that are not on the tiles.', label:'Amount', quick:[25,50,100,200],
-      onDone:v=>{ if(v&&v>0){ S.cart.push({lid:uid(),itemId:'custom',name:'Custom job',cat:'Others',price:v,qty:1});
-        persist.cart(); renderCart(); } }});
-    return;
-  }
+  if(custom){ customAmount(); return; }
   const t=e.target.closest('.tile[data-id]'); if(!t) return;
   const item=S.catalog.find(i=>i.id===t.dataset.id); if(!item) return;
   addToCart(item);
@@ -1167,13 +1366,60 @@ $('#lines').addEventListener('click',e=>{
     onDone:v=>{ if(v!==null) setQty(lid,Math.floor(v)); }});
 });
 
+$('#custs').addEventListener('click',e=>{
+  if(e.target.closest('#addCust')) return addCust();
+  const b=e.target.closest('button[data-cust]'); if(!b) return;
+  switchCust(b.dataset.cust);
+});
+
 $('#clearCart').addEventListener('click',()=>{
-  if(!S.cart.length) return;
-  confirmModal('Clear this sale?','All items in the current sale will be removed.','Clear',()=>{
+  const a=activeSession();
+  if(!a.items.length) return;
+  confirmModal('Clear '+a.label+'?','Everything rung up for them is removed. The customer stays open.','Clear',()=>{
     S.cart=[]; persist.cart(); renderCart();
   },true);
 });
+
+$('#closeCust').addEventListener('click',()=>{
+  const a=activeSession();
+  const go=()=>{ closeCust(a.id); toast(a.label+' closed'); };
+  if(!a.items.length) return go();
+  confirmModal('Close '+a.label+'?','They have '+peso(cartTotal())+' rung up and it has not been charged.','Close',go,true);
+});
+
+// Renaming turns "Customer 2" into whatever is useful at the counter — a name,
+// or what they came in for.
+$('#cartTitle').addEventListener('click',()=>{
+  const a=activeSession();
+  openModal(
+    '<h3>Name this customer</h3><p class="hint">Anything that helps you tell them apart.</p>'+
+    '<div class="field"><input id="cnName" type="text" maxlength="24" value="'+esc(a.label)+'"></div>'+
+    '<div class="modal-actions"><button class="btn ghost" id="cnNo">Cancel</button>'+
+    '<button class="btn primary" id="cnOk">Save</button></div>',
+    m=>{
+      const inp=$('#cnName',m);
+      const ok=()=>{ a.label = inp.value.trim() || nextCustomerLabel();
+                     closeModal(); persist.cart(); renderCart(); };
+      $('#cnNo',m).onclick=closeModal;
+      $('#cnOk',m).onclick=ok;
+      modalKeys(e=>{ if(e.key==='Enter'){ e.preventDefault(); ok(); } });
+      setTimeout(()=>{ inp.focus(); inp.select(); },50);
+    }
+  );
+});
 $('#chargeBtn').addEventListener('click',openCharge);
+
+// Enter on the till opens the charge sheet, so a counter with a keyboard can
+// run a whole sale without reaching for the screen. It only opens the sheet —
+// taking the money still needs a second Enter in there.
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Enter' || e.metaKey || e.ctrlKey || e.altKey) return;
+  if($('#scrim').classList.contains('on')) return;                 // a sheet owns the keys
+  if(e.target && e.target.matches && e.target.matches('input,textarea,select')) return;
+  if(!$('#view-sell').classList.contains('on')) return;
+  if(!cartCount()) return;
+  e.preventDefault(); openCharge();
+});
 
 $('#salesPane').addEventListener('click',e=>{
   const b=e.target.closest('button[data-act]'); if(!b) return;
