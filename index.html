@@ -1625,6 +1625,19 @@ function roleOf(sess){
 }
 const isAdmin = ()=>roleOf(session) === 'admin';
 
+/* Everything the role decides, applied in one go. `session` changes in four
+   places — signing in, signing out, restoring a saved session at startup and
+   supabase refreshing its token — and the admin tabs stayed hidden after a
+   restore because only two of those four put the role back on screen. */
+function applyRole(){
+  applyRoleToTabs();
+  renderBooks();          // re-locks or unlocks the Books body
+  // Redraw the pill so it names the role, without claiming a sync that has
+  // not happened: keep whatever state it was already in.
+  setSync(session ? (syncKind==='signedout' ? 'ok' : syncKind) : 'signedout',
+          session ? syncNote : '');
+}
+
 if(!S.settings.device){ S.settings.device = uid(); persist.set(); }
 
 // How each local collection maps onto its table, in both directions.
@@ -1682,7 +1695,11 @@ function merge(localRows, remoteRaw, fromRow){
   return [...byId.values()];
 }
 
+// Remembered so the pill can be redrawn when the role changes without
+// inventing a sync state it is not actually in.
+let syncKind='signedout', syncNote='';
 function setSync(kind, note){
+  syncKind=kind; syncNote=note||'';
   const pill=$('#syncPill');
   if(!SYNC_ON){ pill.hidden=true; return; }
   pill.hidden=false;
@@ -1691,7 +1708,7 @@ function setSync(kind, note){
   const base = ({
     ok:'Synced', syncing:'Syncing…', error:'Not synced', signedout:'Local only', offline:'Offline'
   }[kind] || 'Local only');
-  $('#syncText').textContent = note || (who ? who + ' · ' + base : base);
+  $('#syncText').textContent = syncNote || (who ? who + ' · ' + base : base);
   const act=$('#syncAction');
   act.hidden=false;
   act.textContent = session ? 'Sign out' : 'Sign in';
@@ -2179,9 +2196,9 @@ function signInModal(){
           if(error) throw new Error(/invalid/i.test(error.message)
             ? 'That is not the '+pick+' password.' : error.message);
           session=data.session;
-          closeModal(); setSync('syncing');
-          applyRoleToTabs();        // signing in as admin reveals Report and Books
-          renderBooks();
+          closeModal();
+          applyRole();              // signing in as admin reveals Report and Books
+          setSync('syncing');
           syncNow();
         }catch(err){
           msg.textContent = err.message || 'That did not work.';
@@ -2197,8 +2214,8 @@ $('#syncAction').addEventListener('click',()=>{
   if(!sb){ toast('Still connecting…'); return; }
   if(session){
     confirmModal('Sign out?','This tablet stops syncing. Sales already sent are safe, and new ones keep saving here.','Sign out',async ()=>{
-      await sb.auth.signOut(); session=null; setSync('signedout');
-      applyRoleToTabs(); renderBooks(); toast('Signed out');
+      await sb.auth.signOut(); session=null;
+      applyRole(); toast('Signed out');
     },true);
   } else signInModal();
 });
@@ -2216,8 +2233,10 @@ async function initSync(){
   }
   const { data } = await sb.auth.getSession();
   session = data ? data.session : null;
-  sb.auth.onAuthStateChange((_e,sess)=>{ session=sess; setSync(sess?'ok':'signedout'); });
-  setSync(session?'ok':'signedout');
+  // A saved admin session comes back here, long after the boot pass that first
+  // hid the admin tabs. Re-apply the role or he stays on the staff view.
+  sb.auth.onAuthStateChange((_e,sess)=>{ session=sess; applyRole(); });
+  applyRole();
   if(session) syncNow();
   setInterval(()=>{ if(session) syncNow(); }, 30000);
   window.addEventListener('online',  ()=>scheduleSync());
